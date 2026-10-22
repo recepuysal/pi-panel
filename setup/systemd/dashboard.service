@@ -1,0 +1,16 @@
+[Unit]
+Description=HDMI paneli (saat, hava durumu, duvar kagidi)
+After=systemd-user-sessions.service
+Conflicts=getty@tty1.service
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/dashboard
+Environment=SDL_VIDEODRIVER=dummy PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /home/pi/dashboard/dashboard.py
+Restart=always
+RestartSec=5
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+cache/
+setup/install.log
+
+# Pi'de uretilenler
+assets/*.png
+ytcast/node_modules/
+ytcast/node22/
+ytcast/yt-dlp
+ytcast/.cache/
+ytcast/.node-persist/
+
+# eski onizleme goruntuleri
+/*.png

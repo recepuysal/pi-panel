@@ -1,0 +1,12 @@
+[Unit]
+Description=Wi-Fi kurulumu: ag yoksa Pi-Kurulum erisim noktasi ve ayar sayfasi
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+ExecStart=/usr/bin/python3 /home/pi/dashboard/wifi_setup.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

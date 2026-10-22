@@ -1,0 +1,9 @@
+{
+  "name": "pi-ytcast",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "yt-cast-receiver": "^2.1.0",
+    "youtubei.js": "^16.0.1"
+  }
+}
