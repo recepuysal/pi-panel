@@ -8,7 +8,9 @@ Masaustu gerektirmez: pygame ile cizer, sonucu dogrudan /dev/fb0'a yazar.
 Ayarlar (opsiyonel) config.json: {"city": "Istanbul", "lat": 41.01, "lon": 28.95, "bing_market": "tr-TR"}
 """
 import datetime as dt
+import email.utils
 import functools
+import html
 import json
 import math
 import mmap
@@ -23,6 +25,7 @@ import threading
 import time
 import urllib.request
 import warnings
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
@@ -66,6 +69,9 @@ WMO = {
 
 WEATHER_EVERY = 15 * 60
 RATE_EVERY = 60 * 60
+NEWS_URL = "https://www.trthaber.com/manset_articles.rss"  # TRT Haber mansetleri, editor sirasiyla
+NEWS_EVERY = 15 * 60
+NEWS_SHOW = 30  # her baslik kac saniye ekranda kalir
 OUNCE_G = 31.1035  # 1 troy ons = 31,1035 gram
 WHITE = (255, 255, 255)
 SOFT = (215, 222, 235)
@@ -110,6 +116,7 @@ class State:
         self.wall_path = None
         self.wall_meta = {}
         self.special = []  # [(tarih, ad)] resmi ve dini gunler
+        self.news = []  # [(saat, baslik)] gunun mansetleri
 
     def update(self, **kw):
         with self.lock:
@@ -276,6 +283,22 @@ def special_days(months=13):
     return sorted((d, n) for d, n in out if d >= today)
 
 
+def fetch_news(url, limit=10):
+    """Son 24 saatin ilk `limit` manseti: [("08:18", "Baslik"), ...]."""
+    root = ET.fromstring(http_get(url))
+    now = dt.datetime.now(dt.timezone.utc)
+    out = []
+    for item in root.iter("item"):
+        title = " ".join(html.unescape(item.findtext("title") or "").split())
+        try:
+            when = email.utils.parsedate_to_datetime(item.findtext("pubDate"))
+        except (TypeError, ValueError):
+            when = None
+        if title and (when is None or now - when < dt.timedelta(hours=24)):
+            out.append((when.astimezone().strftime("%H:%M") if when else "", title))
+    return out[:limit]
+
+
 def special_line(special, today):
     """Ana ekran satiri: yalniz bugun resmi / dini bir gunse (yoksa bos, satir gorunmez)."""
     names = [n for d, n in special if d == today]
@@ -284,7 +307,7 @@ def special_line(special, today):
 
 def worker(state, cfg):
     """Arka planda konum, hava durumu ve duvar kagidini gunceller."""
-    last_weather = last_rate = 0
+    last_weather = last_rate = last_news = 0
     wall_day = special_day = None
     path, meta = latest_cached_wallpaper()
     if path:
@@ -310,6 +333,10 @@ def worker(state, cfg):
                     state.update(wall_path=path, wall_meta=meta)
                     log("duvar kagidi:", meta.get("title", path.name))
                 wall_day = dt.date.today()
+            if cfg["news"] and time.time() - last_news > NEWS_EVERY:
+                last_news = time.time()  # kaynak cevap vermezse diger veriler beklemesin: 15 dk sonra tekrar
+                state.news = fetch_news(cfg.get("news_url") or NEWS_URL)  # saat katmaninda cizilir
+                log("haberler guncellendi:", len(state.news))
             time.sleep(30)
         except Exception as e:  # ag yoksa sessizce tekrar dene
             log("guncelleme hatasi:", e)
@@ -393,7 +420,7 @@ def text(surf, s, f, color, anchor_pos, anchor="topleft", shadow=True, alpha=255
     rect = img.get_rect(**{anchor: anchor_pos})
     if shadow:
         sh = f.render(s, True, (0, 0, 0))
-        sh.set_alpha(110)
+        sh.set_alpha(110 * alpha // 255)
         surf.blit(sh, rect.move(2, 3))
     surf.blit(img, rect)
     return rect
@@ -825,6 +852,23 @@ class Dashboard:
         text(surf, f"{nname}: {when.day} {MONTHS[when.month - 1]} · {left}", font("Inter-Regular", U(20)), MUTED,
              (tx, mc.y + U(112)), shadow=False)
 
+    def draw_news(self, surf, y):
+        """Tarihin altinda sakin bir manset: NEWS_SHOW saniyede bir degisir, 2 sn'de yavasca belirir."""
+        news = self.state.news if self.cfg["news"] else []
+        if not news:
+            return
+        U = self.U
+        slot, sec = divmod(int(time.time()), NEWS_SHOW)
+        when, title = news[slot % len(news)]
+        alpha = (90, 170)[sec] if sec < 2 else 230
+        f, lh = font("Inter-Regular", U(23)), U(30)
+        x = U(60)
+        if when:
+            x = text(surf, when, font("Inter-Medium", U(19)), MUTED, (x, y + U(3)), alpha=alpha).right + U(14)
+        lines = max(1, (U(368) - y) // lh)  # medya karti y=372'de baslar
+        for i, s in enumerate(wrap_lines(title, f, U(694) - x, lines)):
+            text(surf, s, f, SOFT, (x, y + i * lh), alpha=alpha)
+
     def build_static(self):
         """Saat disindaki her sey: veri degisince bir kez cizilir."""
         with self.state.lock:
@@ -906,7 +950,8 @@ class Dashboard:
         line, color = special_line(self.state.special, now.date())
         if line:
             f = font("Inter-Regular", U(26))
-            text(surf, fit_text(line, f, U(680)), f, color, (U(60), drect.bottom + U(10)))  # hava karti x=754
+            drect = text(surf, fit_text(line, f, U(680)), f, color, (U(60), drect.bottom + U(10)))  # hava karti x=754
+        self.draw_news(surf, drect.bottom + U(16))
 
         if self.spotify_active():
             self.draw_spotify(surf)
@@ -1058,7 +1103,8 @@ def main():
     if "--shot" in sys.argv:
         out = sys.argv[sys.argv.index("--shot") + 1]
         deadline = time.time() + 60  # verilerin gelmesini bekle
-        while time.time() < deadline and (state.weather is None or state.wall_path is None or state.rates is None):
+        while time.time() < deadline and (state.weather is None or state.wall_path is None or state.rates is None
+                                         or (cfg["news"] and not state.news)):
             time.sleep(0.5)
         dash = Dashboard(1280, 800, state, cfg)
         if "--ap-demo" in sys.argv:  # kurulum ekranini Wi-Fi'yi kesmeden onizle
