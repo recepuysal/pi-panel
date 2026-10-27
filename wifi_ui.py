@@ -1194,7 +1194,7 @@ class RadioUI(Menu):
 # ---------------------------------------------------------------- ayarlar (ustten asagi cekilen panel)
 
 SETTINGS_DEFAULTS = {"evening_mode": True, "evening_start": "17:00", "night_mode": True, "night_start": "00:00",
-                     "night_end": "09:00", "news": True}
+                     "night_end": "09:00", "news": True, "quake": True}
 
 
 class SettingsUI(Menu):
@@ -1238,7 +1238,7 @@ class SettingsUI(Menu):
     def draw_list(self, surf):
         m, U, W = self.m, self.U, self.w
         self.darken(surf, 120)
-        box = self.list_box = pygame.Rect(0, 0, U(780), U(694))
+        box = self.list_box = pygame.Rect(0, 0, U(780), U(778))
         box.midtop = (W // 2, -U(32))  # ust koseler ekran disinda: yukaridan inen panel
         self.card(surf, box, U(32))
         pygame.draw.rect(surf, (90, 98, 120), (box.centerx - U(32), box.bottom - U(18), U(64), U(6)),
@@ -1268,7 +1268,8 @@ class SettingsUI(Menu):
             y += U(84)
 
         row("Akşam modu", f"Saat {self.cfg['evening_start']} – sabah: koyu tema ve ay bilgisi", "evening_mode")
-        row("Haber satırı", "Hava tahmininin üstünde günün manşetleri (TRT Haber, NTV)", "news")
+        row("Haber satırı", "Manşetler (TRT Haber, NTV) ve tarihte bugün", "news")
+        row("Deprem bildirimi", "Marmara'da 4 ve üzeri depremde 10 dk kart (AFAD)", "quake")
         row("Gece modu", "Ekranı karartır, yalnızca saat görünür", "night_mode")
 
         # gece saatleri: [-] 00:00 [+]   [-] 09:00 [+]

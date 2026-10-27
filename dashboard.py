@@ -16,6 +16,7 @@ import math
 import mmap
 import os
 import queue
+import random
 import re
 import signal
 import socket
@@ -75,6 +76,13 @@ NEWS_FEEDS = [  # (gorunen ad, RSS / Atom adresi); basliklar sirayla karistirili
 ]
 NEWS_EVERY = 15 * 60
 NEWS_SHOW = 30  # her baslik kac saniye ekranda kalir
+HISTORY_URL = "https://api.wikimedia.org/feed/v1/wikipedia/tr/onthisday/events/{m:02d}/{d:02d}"  # Tarihte bugun
+GRIM = re.compile(r"\böl|idam|saldır|katliam|bomba|PKK|terör|suikast|darbe|kazıkta|yakıl", re.I)  # sakin ekran
+QUAKE_URL = "https://servisnet.afad.gov.tr/apigateway/deprem/apiv2/event/filter"  # AFAD, saatler UTC
+QUAKE_BOX = (39.6, 41.9, 25.9, 31.6)  # Marmara: enlem min-max, boylam min-max
+QUAKE_MIN = 4.0
+QUAKE_EVERY = 60
+QUAKE_SHOW = 10 * 60  # deprem karti bu kadar saniye ekranda kalir
 OUNCE_G = 31.1035  # 1 troy ons = 31,1035 gram
 WHITE = (255, 255, 255)
 SOFT = (215, 222, 235)
@@ -120,6 +128,8 @@ class State:
         self.wall_meta = {}
         self.special = []  # [(tarih, ad)] resmi ve dini gunler
         self.news = []  # [(saat, kaynak, baslik)] gunun mansetleri
+        self.history = []  # [(yil, olay)] tarihte bugun
+        self.quake = None  # Marmara'daki son buyuk deprem (AFAD)
 
     def update(self, **kw):
         with self.lock:
@@ -332,6 +342,43 @@ def fetch_news(feeds, per_feed=8):
     return out
 
 
+def fetch_history(day, count=6):
+    """Vikipedi "Tarihte bugun": gune gore karistirilmis, kisa ve sakin `count` olay."""
+    data = json.loads(http_get(HISTORY_URL.format(m=day.month, d=day.day)))
+    events = [(str(e["year"]), " ".join(e["text"].split())) for e in data.get("events", [])]
+    events = [e for e in events if len(e[1]) <= 110 and not GRIM.search(e[1])]
+    random.Random(day.toordinal()).shuffle(events)
+    return events[:count]
+
+
+def fetch_quake():
+    """Son 1 saatte Marmara'da QUAKE_MIN ve uzeri en son deprem (yoksa None)."""
+    end = dt.datetime.now(dt.timezone.utc)
+    start = end - dt.timedelta(hours=1)
+    q = f"?start={start:%Y-%m-%dT%H:%M:%S}&end={end:%Y-%m-%dT%H:%M:%S}&minmag={QUAKE_MIN}"
+    found = []
+    for e in json.loads(http_get(QUAKE_URL + q, timeout=15)):  # API'nin alan filtresi calismiyor: burada
+        lat, lon = float(e["latitude"]), float(e["longitude"])
+        if QUAKE_BOX[0] <= lat <= QUAKE_BOX[1] and QUAKE_BOX[2] <= lon <= QUAKE_BOX[3]:
+            found.append({"time": dt.datetime.fromisoformat(e["date"]).replace(tzinfo=dt.timezone.utc),
+                          "mag": float(e["magnitude"]), "place": e["location"], "depth": float(e["depth"])})
+    return max(found, key=lambda x: x["time"], default=None)
+
+
+def quake_worker(state, cfg):
+    """Deprem kontrolu ayri dongude: haber / hava beklemesi geciktirmesin."""
+    while True:
+        try:
+            if cfg["quake"]:
+                q = fetch_quake()
+                if q and q != state.quake:
+                    log("deprem:", q["mag"], q["place"])
+                    state.quake = q
+        except Exception as e:
+            log("deprem kontrolu:", e)
+        time.sleep(QUAKE_EVERY)
+
+
 def special_line(special, today):
     """Ana ekran satiri: yalniz bugun resmi / dini bir gunse (yoksa bos, satir gorunmez)."""
     names = [n for d, n in special if d == today]
@@ -341,7 +388,7 @@ def special_line(special, today):
 def worker(state, cfg):
     """Arka planda konum, hava durumu ve duvar kagidini gunceller."""
     last_weather = last_rate = last_news = 0
-    wall_day = special_day = None
+    wall_day = special_day = history_day = None
     path, meta = latest_cached_wallpaper()
     if path:
         state.update(wall_path=path, wall_meta=meta)
@@ -370,6 +417,10 @@ def worker(state, cfg):
                 last_news = time.time()  # kaynak cevap vermezse diger veriler beklemesin: 15 dk sonra tekrar
                 state.news = fetch_news(cfg.get("news_feeds") or NEWS_FEEDS)  # saat katmaninda cizilir
                 log("haberler guncellendi:", len(state.news))
+            if cfg["news"] and history_day != dt.date.today():
+                state.history = fetch_history(dt.date.today())
+                history_day = dt.date.today()
+                log("tarihte bugun:", len(state.history))
             time.sleep(30)
         except Exception as e:  # ag yoksa sessizce tekrar dene
             log("guncelleme hatasi:", e)
@@ -887,14 +938,19 @@ class Dashboard:
 
     def draw_news(self, surf):
         """Hava tahmininin ustunde ince serit: tek manset, NEWS_SHOW saniyede bir degisir, 2 sn'de belirir."""
-        news = self.state.news if self.cfg["news"] else []
-        if not news:
+        items = list(self.state.news) if self.cfg["news"] else []
+        for i, (year, event) in enumerate(self.state.history if self.cfg["news"] else []):
+            pos = 4 * i + 3  # her 3 mansetten sonra bir "Tarihte bugun"
+            if pos > len(items):
+                break
+            items.insert(pos, ("Tarihte bugün", year, event))
+        if not items:
             return
         U = self.U
         bar = pygame.Rect(U(56), U(530), self.w - U(112), U(36))  # medya / ay karti 522'de, tahmin 574'te
         panel(surf, bar, alpha=150 if self.static_theme else 105, radius=bar.h // 2)
         slot, sec = divmod(int(time.time()), NEWS_SHOW)
-        when, source, title = news[slot % len(news)]
+        when, source, title = items[slot % len(items)]
         alpha = (90, 170)[sec] if sec < 2 else 230
         x = bar.x + U(22)
         label = " · ".join(p for p in (when, source) if p)
@@ -904,6 +960,32 @@ class Dashboard:
         f = font("Inter-Regular", U(21))
         text(surf, fit_text(title, f, bar.right - U(22) - x), f, SOFT, (x, bar.centery), "midleft", shadow=False,
              alpha=alpha)
+
+    def quake_active(self):
+        q = self.state.quake if self.cfg["quake"] else None
+        return q if q and time.time() - q["time"].timestamp() < QUAKE_SHOW else None
+
+    def draw_quake(self, surf, q):
+        """Marmara'da deprem: medya kartinin yerinde QUAKE_SHOW sure sakin bir kart."""
+        U = self.U
+        sc = pygame.Rect(U(56), U(372), U(560), U(150))
+        panel(surf, sc, alpha=170)
+        c = (sc.x + U(75), sc.centery)
+        pygame.draw.circle(surf, (40, 32, 18), c, U(56))
+        pygame.draw.circle(surf, SPECIAL_COLOR, c, U(56), width=U(3))
+        text(surf, f"{q['mag']:.1f}".replace(".", ","), font("Inter-SemiBold", U(40)), SPECIAL_COLOR, c, "center",
+             shadow=False)
+        tx = sc.x + U(152)
+        tw = sc.right - tx - U(24)
+        mins = int((time.time() - q["time"].timestamp()) // 60)
+        ago = "az önce" if mins < 1 else f"{mins} dk önce"
+        text(surf, f"Deprem · {q['time'].astimezone():%H:%M} · {ago}", font("Inter-SemiBold", U(18)), SPECIAL_COLOR,
+             (tx, sc.y + U(18)), shadow=False)
+        f = font("Inter-SemiBold", U(28))
+        text(surf, fit_text(q["place"], f, tw), f, WHITE, (tx, sc.y + U(44)), shadow=False)
+        text(surf, f"Büyüklük {q['mag']:.1f} · Derinlik {q['depth']:.0f} km".replace(".", ","),
+             font("Inter-Regular", U(21)), SOFT, (tx, sc.y + U(82)), shadow=False)
+        text(surf, "Kaynak: AFAD", font("Inter-Regular", U(18)), MUTED, (tx, sc.y + U(114)), shadow=False)
 
     def build_static(self):
         """Saat disindaki her sey: veri degisince bir kez cizilir."""
@@ -988,7 +1070,10 @@ class Dashboard:
             f = font("Inter-Regular", U(26))
             drect = text(surf, fit_text(line, f, U(680)), f, color, (U(60), drect.bottom + U(10)))  # hava karti x=754
 
-        if self.spotify_active():
+        quake = self.quake_active()
+        if quake:
+            self.draw_quake(surf, quake)  # medya kartinin yerine birkac dakika
+        elif self.spotify_active():
             self.draw_spotify(surf)
         self.draw_news(surf)
 
@@ -1135,6 +1220,7 @@ def main():
     cfg = load_config()
     state = State()
     threading.Thread(target=worker, args=(state, cfg), daemon=True).start()
+    threading.Thread(target=quake_worker, args=(state, cfg), daemon=True).start()
 
     if "--shot" in sys.argv:
         out = sys.argv[sys.argv.index("--shot") + 1]
@@ -1147,6 +1233,9 @@ def main():
             dash.wifi_state = lambda: {"mode": "ap", "ssid": "Pi-Kurulum", "password": "pikurulum",
                                        "url": "http://10.42.0.1", "error": None}
         dash.force_evening = "--evening" in sys.argv
+        if "--quake-demo" in sys.argv:
+            state.quake = {"time": dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=3), "mag": 4.3,
+                           "place": "Marmara Denizi (Tekirdağ)", "depth": 7.0}
         if "--spotify-demo" in sys.argv:
             dash.spotify_state = lambda: dash.spot
             dash.spot = {"state": "playing", "name": "Gel Gör Beni Aşk Neyledi", "artists": ["Kubat"],
