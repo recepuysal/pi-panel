@@ -1027,7 +1027,7 @@ class Dashboard:
         U = self.U
         stale = time.time() - u.get("time", 0) > 30 * 60  # bilgisayar kapali: eski bilgi soluk
         alpha = 120 if stale else 255
-        layer = pygame.Surface((U(330), U(40)), pygame.SRCALPHA)
+        layer = pygame.Surface((U(600), U(40)), pygame.SRCALPHA)  # bol genis; sonra icerige gore kirpilir
         x, mid = U(2), layer.get_height() // 2
         r = U(10)  # yildiz simgesi
         for k in range(6):
@@ -1059,7 +1059,7 @@ class Dashboard:
                 pygame.draw.rect(layer, DOWN_RED if pct >= 95 else SPECIAL_COLOR if pct >= 80 else WHITE, fill,
                                  border_radius=U(2))
             x = bar.right
-        img = layer.subsurface((0, 0, x + U(2), layer.get_height())).copy()
+        img = layer.subsurface((0, 0, min(x + U(2), layer.get_width()), layer.get_height())).copy()
         if stale:
             img.fill((255, 255, 255, alpha), special_flags=pygame.BLEND_RGBA_MULT)
         rect = img.get_rect(midleft=(left, cy))
@@ -1165,7 +1165,10 @@ class Dashboard:
         now = dt.datetime.now()
 
         # Saat + tarih (sol ust); ustunde Claude kullanimi
-        self.draw_claude(surf, U(72), U(24))
+        try:
+            self.draw_claude(surf, U(72), U(24))
+        except Exception as e:  # ek gosterge paneli asla dusurmesin
+            log("claude gostergesi:", e)
         clock = text(surf, now.strftime("%H:%M"), font("InterDisplay-Light", U(200)), WHITE, (U(48), U(10)))
         text(surf, now.strftime(":%S"), font("InterDisplay-Light", U(72)), SOFT,
              (clock.right + U(6), clock.bottom - U(38)), "bottomleft")
