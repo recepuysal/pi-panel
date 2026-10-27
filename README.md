@@ -48,9 +48,6 @@ dokunmatik ekranla kullanılır. Raspberry Pi 4 Model B (4 GB) ve 1280×800 Wave
 5. İsteğe bağlı, sol üstte Claude kullanımı (oturum ve haftalık %): bilgisayarda Claude Code'a giriş yapılmış olmalı;
    `powershell -ExecutionPolicy Bypass -File windows\claude-kullanim-gorevi.ps1` 5 dk'da bir yüzdeleri Pi'ye yollar
    (oturum anahtarı bilgisayarda kalır).
-6. İsteğe bağlı, planlı elektrik kesintisi (BEDAŞ, Avrupa yakası): `config.json`'a
-   `"outage_district": "Bağcılar", "outage_neighborhood": "Fevzi Çakmak"` gibi ilçe ve mahalle yazılır;
-   kesinti 36 saat kala haber şeridinde görünür.
 
 Şehir ve modlar `config.json`'dan ya da ekranın üst kenarından aşağı kaydırılan ayarlar panelinden değiştirilir.
 
