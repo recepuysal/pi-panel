@@ -69,7 +69,10 @@ WMO = {
 
 WEATHER_EVERY = 15 * 60
 RATE_EVERY = 60 * 60
-NEWS_URL = "https://www.trthaber.com/manset_articles.rss"  # TRT Haber mansetleri, editor sirasiyla
+NEWS_FEEDS = [  # (gorunen ad, RSS / Atom adresi); basliklar sirayla karistirilir
+    ("TRT", "https://www.trthaber.com/manset_articles.rss"),  # TRT Haber mansetleri, editor sirasiyla
+    ("NTV", "https://www.ntv.com.tr/gundem.rss"),             # NTV gundem, editorun secimi
+]
 NEWS_EVERY = 15 * 60
 NEWS_SHOW = 30  # her baslik kac saniye ekranda kalir
 OUNCE_G = 31.1035  # 1 troy ons = 31,1035 gram
@@ -116,7 +119,7 @@ class State:
         self.wall_path = None
         self.wall_meta = {}
         self.special = []  # [(tarih, ad)] resmi ve dini gunler
-        self.news = []  # [(saat, baslik)] gunun mansetleri
+        self.news = []  # [(saat, kaynak, baslik)] gunun mansetleri
 
     def update(self, **kw):
         with self.lock:
@@ -283,20 +286,50 @@ def special_days(months=13):
     return sorted((d, n) for d, n in out if d >= today)
 
 
-def fetch_news(url, limit=10):
-    """Son 24 saatin ilk `limit` manseti: [("08:18", "Baslik"), ...]."""
+ATOM = "{http://www.w3.org/2005/Atom}"
+
+
+def feed_items(url, limit):
+    """RSS ya da Atom akisinin son 24 saatteki ilk `limit` basligi: [(zaman, baslik), ...]."""
     root = ET.fromstring(http_get(url))
     now = dt.datetime.now(dt.timezone.utc)
     out = []
-    for item in root.iter("item"):
-        title = " ".join(html.unescape(item.findtext("title") or "").split())
+    for item in list(root.iter("item")) + list(root.iter(ATOM + "entry")):
+        title = " ".join(html.unescape(item.findtext("title") or item.findtext(ATOM + "title") or "").split())
+        stamp = item.findtext("pubDate") or item.findtext(ATOM + "published") or item.findtext(ATOM + "updated")
         try:
-            when = email.utils.parsedate_to_datetime(item.findtext("pubDate"))
+            when = (email.utils.parsedate_to_datetime(stamp) if item.tag == "item"
+                    else dt.datetime.fromisoformat(stamp))
         except (TypeError, ValueError):
             when = None
+        if title.endswith("?"):  # "... aciklandi mi?" tarzi tik basliklari atla
+            continue
         if title and (when is None or now - when < dt.timedelta(hours=24)):
-            out.append((when.astimezone().strftime("%H:%M") if when else "", title))
+            out.append((when, title))
     return out[:limit]
+
+
+def same_story(a, b):
+    """Iki baslik ayni haber mi: anlamli kelimelerin yarisi ortaksa."""
+    wa, wb = ({w for w in re.findall(r"\w{4,}", t.lower())} for t in (a, b))
+    return bool(wa and wb) and len(wa & wb) >= min(len(wa), len(wb)) / 2
+
+
+def fetch_news(feeds, per_feed=8):
+    """Kaynaklarin mansetleri sirayla karistirilir, ayni haber bir kez: [("08:18", "TRT", "Baslik"), ...]."""
+    lists = []
+    for name, url in feeds:
+        try:
+            lists.append([(name, w, t) for w, t in feed_items(url, per_feed)])
+        except Exception as e:  # biri cevap vermezse digerleri yine gorunsun
+            log("haber kaynagi", name, e)
+    out = []
+    for i in range(max(map(len, lists), default=0)):
+        for items in lists:
+            if i < len(items) and not any(same_story(items[i][2], t) for _, _, t in out):
+                name, when, title = items[i]
+                out.append((when.astimezone().strftime("%H:%M") if when else "", name, title))
+    return out
 
 
 def special_line(special, today):
@@ -335,7 +368,7 @@ def worker(state, cfg):
                 wall_day = dt.date.today()
             if cfg["news"] and time.time() - last_news > NEWS_EVERY:
                 last_news = time.time()  # kaynak cevap vermezse diger veriler beklemesin: 15 dk sonra tekrar
-                state.news = fetch_news(cfg.get("news_url") or NEWS_URL)  # saat katmaninda cizilir
+                state.news = fetch_news(cfg.get("news_feeds") or NEWS_FEEDS)  # saat katmaninda cizilir
                 log("haberler guncellendi:", len(state.news))
             time.sleep(30)
         except Exception as e:  # ag yoksa sessizce tekrar dene
@@ -861,11 +894,12 @@ class Dashboard:
         bar = pygame.Rect(U(56), U(530), self.w - U(112), U(36))  # medya / ay karti 522'de, tahmin 574'te
         panel(surf, bar, alpha=150 if self.static_theme else 105, radius=bar.h // 2)
         slot, sec = divmod(int(time.time()), NEWS_SHOW)
-        when, title = news[slot % len(news)]
+        when, source, title = news[slot % len(news)]
         alpha = (90, 170)[sec] if sec < 2 else 230
         x = bar.x + U(22)
-        if when:
-            x = text(surf, when, font("Inter-Medium", U(18)), MUTED, (x, bar.centery), "midleft", shadow=False,
+        label = " · ".join(p for p in (when, source) if p)
+        if label:
+            x = text(surf, label, font("Inter-Medium", U(18)), MUTED, (x, bar.centery), "midleft", shadow=False,
                      alpha=alpha).right + U(14)
         f = font("Inter-Regular", U(21))
         text(surf, fit_text(title, f, bar.right - U(22) - x), f, SOFT, (x, bar.centery), "midleft", shadow=False,
