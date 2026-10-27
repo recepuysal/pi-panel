@@ -1019,8 +1019,8 @@ class Dashboard:
         except (OSError, ValueError):
             return None
 
-    def draw_claude(self, surf, right, cy):
-        """Ust satirda Wi-Fi adinin solunda: Claude simgesi, oturum ve hafta yuzdesi + ince cubuklar."""
+    def draw_claude(self, surf, left, cy):
+        """Sol ust kosede, saatin ustunde: Claude simgesi, oturum ve hafta yuzdesi + ince cubuklar."""
         u = self.claude_usage()
         if not u:
             return
@@ -1062,7 +1062,7 @@ class Dashboard:
         img = layer.subsurface((0, 0, x + U(2), layer.get_height())).copy()
         if stale:
             img.fill((255, 255, 255, alpha), special_flags=pygame.BLEND_RGBA_MULT)
-        rect = img.get_rect(midright=(right, cy))
+        rect = img.get_rect(midleft=(left, cy))
         bg = rect.inflate(U(26), -U(4))
         panel(surf, bg, alpha=150 if self.static_theme else 105, radius=bg.h // 2)  # parlak duvar kagidinda okunsun
         surf.blit(img, rect)
@@ -1164,7 +1164,8 @@ class Dashboard:
         U, W, H = self.U, self.w, self.h
         now = dt.datetime.now()
 
-        # Saat + tarih (sol ust)
+        # Saat + tarih (sol ust); ustunde Claude kullanimi
+        self.draw_claude(surf, U(72), U(24))
         clock = text(surf, now.strftime("%H:%M"), font("InterDisplay-Light", U(200)), WHITE, (U(48), U(10)))
         text(surf, now.strftime(":%S"), font("InterDisplay-Light", U(72)), SOFT,
              (clock.right + U(6), clock.bottom - U(38)), "bottomleft")
@@ -1228,7 +1229,6 @@ class Dashboard:
             left = text(surf, ssid, font("Inter-Medium", U(20)), WHITE, (x - U(12), top + size // 2), "midright",
                         shadow=False).x
         self.wifi_hit = pygame.Rect(left - U(30), 0, self.bt_hit.x - left + U(30), U(80))  # parmak icin genis alan
-        self.draw_claude(surf, left - U(34), top + size // 2)
 
         # Wi-Fi kurulum durumu (wifi_setup.py)
         ws = self.wifi_state()

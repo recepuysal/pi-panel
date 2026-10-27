@@ -45,7 +45,7 @@ dokunmatik ekranla kullanılır. Raspberry Pi 4 Model B (4 GB) ve 1280×800 Wave
 4. İsteğe bağlı, Windows bilgisayar kilitlenince gece ekranı:
    `powershell -ExecutionPolicy Bypass -File windows\pc-kilit-gorevleri.ps1`
    (ssh'ta `pi` adlı, anahtarla girilen bir Host tanımlı olmalı).
-5. İsteğe bağlı, sağ üstte Claude kullanımı (oturum ve haftalık %): bilgisayarda Claude Code'a giriş yapılmış olmalı;
+5. İsteğe bağlı, sol üstte Claude kullanımı (oturum ve haftalık %): bilgisayarda Claude Code'a giriş yapılmış olmalı;
    `powershell -ExecutionPolicy Bypass -File windows\claude-kullanim-gorevi.ps1` 5 dk'da bir yüzdeleri Pi'ye yollar
    (oturum anahtarı bilgisayarda kalır).
 6. İsteğe bağlı, planlı elektrik kesintisi (BEDAŞ, Avrupa yakası): `config.json`'a
