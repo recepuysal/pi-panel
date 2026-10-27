@@ -852,22 +852,24 @@ class Dashboard:
         text(surf, f"{nname}: {when.day} {MONTHS[when.month - 1]} · {left}", font("Inter-Regular", U(20)), MUTED,
              (tx, mc.y + U(112)), shadow=False)
 
-    def draw_news(self, surf, y):
-        """Tarihin altinda sakin bir manset: NEWS_SHOW saniyede bir degisir, 2 sn'de yavasca belirir."""
+    def draw_news(self, surf):
+        """Hava tahmininin ustunde ince serit: tek manset, NEWS_SHOW saniyede bir degisir, 2 sn'de belirir."""
         news = self.state.news if self.cfg["news"] else []
         if not news:
             return
         U = self.U
+        bar = pygame.Rect(U(56), U(530), self.w - U(112), U(36))  # medya / ay karti 522'de, tahmin 574'te
+        panel(surf, bar, alpha=150 if self.static_theme else 105, radius=bar.h // 2)
         slot, sec = divmod(int(time.time()), NEWS_SHOW)
         when, title = news[slot % len(news)]
         alpha = (90, 170)[sec] if sec < 2 else 230
-        f, lh = font("Inter-Regular", U(23)), U(30)
-        x = U(60)
+        x = bar.x + U(22)
         if when:
-            x = text(surf, when, font("Inter-Medium", U(19)), MUTED, (x, y + U(3)), alpha=alpha).right + U(14)
-        lines = max(1, (U(368) - y) // lh)  # medya karti y=372'de baslar
-        for i, s in enumerate(wrap_lines(title, f, U(694) - x, lines)):
-            text(surf, s, f, SOFT, (x, y + i * lh), alpha=alpha)
+            x = text(surf, when, font("Inter-Medium", U(18)), MUTED, (x, bar.centery), "midleft", shadow=False,
+                     alpha=alpha).right + U(14)
+        f = font("Inter-Regular", U(21))
+        text(surf, fit_text(title, f, bar.right - U(22) - x), f, SOFT, (x, bar.centery), "midleft", shadow=False,
+             alpha=alpha)
 
     def build_static(self):
         """Saat disindaki her sey: veri degisince bir kez cizilir."""
@@ -901,7 +903,7 @@ class Dashboard:
                  small, MUTED, (card.x + U(28), card.y + U(266)), shadow=False)
 
             # 6 gunluk tahmin (alt)
-            fc = pygame.Rect(U(56), H - U(56) - U(196), W - U(112), U(196))
+            fc = pygame.Rect(U(56), H - U(56) - U(170), W - U(112), U(170))  # ustunde haber seridi
             panel(surf, fc, alpha=alpha)
             n = len(d["time"])
             colw = fc.w / n
@@ -910,20 +912,20 @@ class Dashboard:
                 day = dt.date.fromisoformat(d["time"][i])
                 label = "Bugün" if i == 0 else DAYS_SHORT[day.weekday()]
                 text(surf, label, font("Inter-SemiBold", U(24)), WHITE if i == 0 else SOFT,
-                     (cx, fc.y + U(18)), "midtop", shadow=False)
+                     (cx, fc.y + U(12)), "midtop", shadow=False)
                 _, k = WMO.get(d["weather_code"][i], ("-", "cloudy"))
-                ico = weather_icon(k, U(72))
-                surf.blit(ico, ico.get_rect(midtop=(cx, fc.y + U(52))))
+                ico = weather_icon(k, U(64))
+                surf.blit(ico, ico.get_rect(midtop=(cx, fc.y + U(42))))
                 hi = font("Inter-SemiBold", U(26)).render(f"{round(d['temperature_2m_max'][i])}°", True, WHITE)
                 lo = font("Inter-Regular", U(26)).render(f"{round(d['temperature_2m_min'][i])}°", True, MUTED)
                 gap = U(12)
                 x0 = cx - (hi.get_width() + gap + lo.get_width()) // 2
-                surf.blit(hi, (x0, fc.y + U(130)))
-                surf.blit(lo, (x0 + hi.get_width() + gap, fc.y + U(130)))
+                surf.blit(hi, (x0, fc.y + U(108)))
+                surf.blit(lo, (x0 + hi.get_width() + gap, fc.y + U(108)))
                 rain = d.get("precipitation_probability_max", [None] * n)[i]
                 if rain:
                     text(surf, f"%{rain} yağış", font("Inter-Medium", U(17)), RAIN_BLUE,
-                         (cx, fc.y + U(164)), "midtop", shadow=False)
+                         (cx, fc.y + U(142)), "midtop", shadow=False)
         else:
             text(surf, "Hava durumu yükleniyor…", font("Inter-Regular", U(24)), MUTED,
                  (card.x + U(28), card.y + U(130)), shadow=False)
@@ -951,10 +953,10 @@ class Dashboard:
         if line:
             f = font("Inter-Regular", U(26))
             drect = text(surf, fit_text(line, f, U(680)), f, color, (U(60), drect.bottom + U(10)))  # hava karti x=754
-        self.draw_news(surf, drect.bottom + U(16))
 
         if self.spotify_active():
             self.draw_spotify(surf)
+        self.draw_news(surf)
 
         # Durum satiri (sol alt kenar): IP her zaman gorunur
         if time.time() - self.status_time > 15:

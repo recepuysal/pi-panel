@@ -1268,7 +1268,7 @@ class SettingsUI(Menu):
             y += U(84)
 
         row("Akşam modu", f"Saat {self.cfg['evening_start']} – sabah: koyu tema ve ay bilgisi", "evening_mode")
-        row("Haber satırı", "Tarihin altında günün manşetleri (TRT Haber)", "news")
+        row("Haber satırı", "Hava tahmininin üstünde günün manşetleri (TRT Haber)", "news")
         row("Gece modu", "Ekranı karartır, yalnızca saat görünür", "night_mode")
 
         # gece saatleri: [-] 00:00 [+]   [-] 09:00 [+]

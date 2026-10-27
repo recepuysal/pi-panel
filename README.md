@@ -6,7 +6,7 @@ dokunmatik ekranla kullanılır. Raspberry Pi 4 Model B (4 GB) ve 1280×800 Wave
 
 ## Özellikler
 
-- **Ana ekran:** saniyeli saat, tarih, günün resmi / dini günü, tarihin altında sakin bir haber satırı (TRT Haber manşetleri, 30 sn’de bir değişir; ayarlardan kapatılır), İstanbul hava durumu (Open-Meteo) ve 6 günlük tahmin,
+- **Ana ekran:** saniyeli saat, tarih, günün resmi / dini günü, hava tahmininin üstünde sakin bir haber şeridi (TRT Haber manşetleri, 30 sn’de bir değişir; ayarlardan kapatılır), İstanbul hava durumu (Open-Meteo) ve 6 günlük tahmin,
   Bing günün duvar kâğıdı, dolar ve gram altın, IP adresi ve CPU sıcaklığı.
 - **Akşam modu:** 17:00'den gün doğumuna kadar koyu tema ve ay evresi kartı.
 - **Gece modu:** belirlenen saatlerde (varsayılan 00:00–09:00) ya da bilgisayar kilitliyken siyah ekranda soluk saat.
