@@ -48,6 +48,8 @@ MEDIA_SOURCES = {
 }
 CLAUDE_USAGE = HERE / "cache" / "claude-usage.json"  # bilgisayardaki windows/claude_kullanim.py yollar
 CLAUDE_ORANGE = (217, 119, 87)
+MAIL_FILE = HERE / "cache" / "mail.json"  # windows/mail_bildirim.ps1 yeni mailde yazar
+MAIL_SHOW = 9  # sn
 PC_LOCKED = Path("/tmp/pc-locked")  # bilgisayar Win+L ile kilitlenince (Gorev Zamanlayicisi, ssh) olusur
 MPV_SOCK = "/run/ytcast/mpv.sock"  # ytcast alicisinin mpv'si: YouTube videosu ekrana dogrudan (DRM) oynar
 
@@ -973,6 +975,58 @@ class Dashboard:
         except (OSError, ValueError):
             return None
 
+    def draw_envelope(self, surf, c, w, a=255):
+        """Zarf simgesi (beyaz govde, mavi kapak cizgisi), merkez c, genislik w."""
+        h = int(w * 0.72)
+        icon = pygame.Surface((w + 2, h + 2), pygame.SRCALPHA)
+        r = pygame.Rect(1, 1, w, h)
+        pygame.draw.rect(icon, (255, 255, 255, a), r, border_radius=max(2, w // 8))
+        t = max(2, w // 11)
+        pygame.draw.lines(icon, (60, 130, 255, a), False,
+                          [(r.x + w // 8, r.y + h // 4), (r.centerx, r.y + h * 11 // 20), (r.right - w // 8, r.y + h // 4)], t)
+        surf.blit(icon, icon.get_rect(center=c))
+
+    def draw_mail(self, surf):
+        """Yeni mail: ust ortada Dynamic Island tarzi hap; acilir, MAIL_SHOW sn durur, kuculup kaybolur."""
+        try:
+            m = json.loads(MAIL_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        now = time.time()
+        age = now - float(m.get("time", 0))
+        unread = int(m.get("unread", 1))
+        if now - float(m.get("ts", m.get("time", 0))) > 150:  # bilgisayar/Outlook kapali: eski bilgi gosterme
+            unread = 0
+        if not 0 <= age < MAIL_SHOW:
+            if unread > 0:  # okunana kadar kucuk gosterge
+                U = self.U
+                r = pygame.Rect(0, U(14), U(110), U(44))
+                r.centerx = self.w // 2
+                pill = pygame.Surface(r.size, pygame.SRCALPHA)
+                pygame.draw.rect(pill, (0, 0, 0, 200), pill.get_rect(), border_radius=r.h // 2)
+                surf.blit(pill, r)
+                self.draw_envelope(surf, (r.x + U(26), r.centery), U(28))
+                text(surf, str(unread), font("Inter-SemiBold", U(22)), WHITE, (r.x + U(48), r.centery), "midleft",
+                     shadow=False)
+            return
+        U = self.U
+        k = min(age / 0.45, (MAIL_SHOW - age) / 0.4, 1.0)  # ac / kapan
+        k = 1 - (1 - k) ** 3
+        w, h = int(U(120) + (U(640) - U(120)) * k), int(U(44) + (U(92) - U(44)) * k)
+        r = pygame.Rect(0, U(14), w, h)
+        r.centerx = self.w // 2
+        pill = pygame.Surface(r.size, pygame.SRCALPHA)
+        pygame.draw.rect(pill, (0, 0, 0, 235), pill.get_rect(), border_radius=h // 2)
+        surf.blit(pill, r)
+        if k > 0.85:
+            a = int(255 * (k - 0.85) / 0.15)
+            c = (r.x + U(46), r.centery)
+            self.draw_envelope(surf, c, U(44), a)
+            tx, tw = r.x + U(88), r.right - r.x - U(88) - U(30)
+            f1, f2 = font("Inter-SemiBold", U(24)), font("Inter-Regular", U(21))
+            text(surf, fit_text(m.get("from", ""), f1, tw), f1, WHITE, (tx, r.y + U(12)), shadow=False, alpha=a)
+            text(surf, fit_text(m.get("subject", ""), f2, tw), f2, SOFT, (tx, r.y + U(48)), shadow=False, alpha=a)
+
     def draw_claude(self, surf, left, cy):
         """Sol ust kosede, saatin ustunde: Claude simgesi, oturum ve hafta yuzdesi + ince cubuklar."""
         u = self.claude_usage()
@@ -1140,6 +1194,7 @@ class Dashboard:
         elif self.spotify_active():
             self.draw_spotify(surf)
         self.draw_news(surf)
+        self.draw_mail(surf)
 
         # Durum satiri (sol alt kenar): IP her zaman gorunur
         if time.time() - self.status_time > 15:
