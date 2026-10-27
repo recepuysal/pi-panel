@@ -24,6 +24,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import urllib.request
 import warnings
 import xml.etree.ElementTree as ET
@@ -46,6 +47,8 @@ MEDIA_SOURCES = {
     "spotify": (Path("/run/raspotify/now.json"), "Spotify", (30, 215, 96)),   # spotify_event.py yazar
     "youtube": (Path("/run/ytcast/now.json"), "YouTube", (255, 78, 69)),      # ytcast/receiver.mjs yazar
 }
+CLAUDE_USAGE = HERE / "cache" / "claude-usage.json"  # bilgisayardaki windows/claude_kullanim.py yollar
+CLAUDE_ORANGE = (217, 119, 87)
 PC_LOCKED = Path("/tmp/pc-locked")  # bilgisayar Win+L ile kilitlenince (Gorev Zamanlayicisi, ssh) olusur
 MPV_SOCK = "/run/ytcast/mpv.sock"  # ytcast alicisinin mpv'si: YouTube videosu ekrana dogrudan (DRM) oynar
 
@@ -83,6 +86,9 @@ QUAKE_BOX = (39.6, 41.9, 25.9, 31.6)  # Marmara: enlem min-max, boylam min-max
 QUAKE_MIN = 4.0
 QUAKE_EVERY = 60
 QUAKE_SHOW = 10 * 60  # deprem karti bu kadar saniye ekranda kalir
+OUTAGE_URL = "https://www.bedas.com.tr/elektrik-getir"  # BEDAS planli kesintiler (Avrupa yakasi)
+OUTAGE_EVERY = 3 * 60 * 60
+OUTAGE_AHEAD = 36 * 60 * 60  # kesinti bu kadar saniye kala seritte gorunmeye baslar
 OUNCE_G = 31.1035  # 1 troy ons = 31,1035 gram
 WHITE = (255, 255, 255)
 SOFT = (215, 222, 235)
@@ -102,14 +108,15 @@ def log(*a):
     print(time.strftime("%H:%M:%S"), *a, flush=True)
 
 
-def http_get(url, timeout=20):
-    req = urllib.request.Request(url, headers={"User-Agent": "pi-dashboard/1.0"})
+def http_get(url, timeout=20, data=None):
+    req = urllib.request.Request(url, data=data, headers={"User-Agent": "pi-dashboard/1.0"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read()
 
 
 def load_config():
-    cfg = {"city": None, "lat": None, "lon": None, "bing_market": "tr-TR", **wifi_ui.SETTINGS_DEFAULTS}
+    cfg = {"city": None, "lat": None, "lon": None, "bing_market": "tr-TR", "outage_district": None,
+           "outage_neighborhood": None, **wifi_ui.SETTINGS_DEFAULTS}
     path = HERE / "config.json"
     if path.exists():
         cfg.update(json.loads(path.read_text(encoding="utf-8")))
@@ -130,6 +137,7 @@ class State:
         self.news = []  # [(saat, kaynak, baslik)] gunun mansetleri
         self.history = []  # [(yil, olay)] tarihte bugun
         self.quake = None  # Marmara'daki son buyuk deprem (AFAD)
+        self.outages = []  # [(baslangic, bitis, sebep)] mahalledeki planli elektrik kesintileri
 
     def update(self, **kw):
         with self.lock:
@@ -365,6 +373,35 @@ def fetch_quake():
     return max(found, key=lambda x: x["time"], default=None)
 
 
+def tr_upper(s):
+    return s.replace("i", "İ").replace("ı", "I").upper()
+
+
+def fetch_outages(district, neighborhood):
+    """BEDAS planli kesintileri: ilcedeki kayitlardan mahalleyi (mesajda "<MAHALLE> mah") gecenler."""
+    body = urllib.parse.urlencode({"countryName": "İSTANBUL", "cityName": tr_upper(district)}).encode()
+    hood = tr_upper(neighborhood)
+    out = []
+    for item in json.loads(http_get(OUTAGE_URL, data=body)):
+        po = item.get("plannedOutage") or {}
+        if hood not in tr_upper(po.get("message", "")):
+            continue
+        try:
+            start, end = (dt.datetime.strptime(po[k], "%Y-%m-%d %H:%M:%S") for k in ("startDateTime", "endDateTime"))
+        except (KeyError, ValueError):
+            continue
+        out.append((start, end, po.get("reason", "").split("-")[0].strip()))
+    return sorted(set(out))
+
+
+def outage_line(start, end, reason, now):
+    if start <= now:
+        return f"Şu an sürüyor · bitiş {end:%H:%M}" + (f" · {reason}" if reason else "")
+    days = (start.date() - now.date()).days
+    day = "Bugün" if days == 0 else "Yarın" if days == 1 else f"{start.day} {MONTHS[start.month - 1]}"
+    return f"{day} {start:%H:%M}–{end:%H:%M}" + (f" · {reason}" if reason else "")
+
+
 def quake_worker(state, cfg):
     """Deprem kontrolu ayri dongude: haber / hava beklemesi geciktirmesin."""
     while True:
@@ -387,7 +424,7 @@ def special_line(special, today):
 
 def worker(state, cfg):
     """Arka planda konum, hava durumu ve duvar kagidini gunceller."""
-    last_weather = last_rate = last_news = 0
+    last_weather = last_rate = last_news = last_outage = 0
     wall_day = special_day = history_day = None
     path, meta = latest_cached_wallpaper()
     if path:
@@ -421,6 +458,10 @@ def worker(state, cfg):
                 state.history = fetch_history(dt.date.today())
                 history_day = dt.date.today()
                 log("tarihte bugun:", len(state.history))
+            if cfg["outage_district"] and cfg["outage_neighborhood"] and time.time() - last_outage > OUTAGE_EVERY:
+                last_outage = time.time()
+                state.outages = fetch_outages(cfg["outage_district"], cfg["outage_neighborhood"])
+                log("elektrik kesintileri:", len(state.outages))
             time.sleep(30)
         except Exception as e:  # ag yoksa sessizce tekrar dene
             log("guncelleme hatasi:", e)
@@ -944,22 +985,87 @@ class Dashboard:
             if pos > len(items):
                 break
             items.insert(pos, ("Tarihte bugün", year, event))
+        now = dt.datetime.now()
+        cuts = [("Elektrik kesintisi", "", outage_line(a, b, r, now), SPECIAL_COLOR) for a, b, r in self.state.outages
+                if b > now and (a - now).total_seconds() < OUTAGE_AHEAD]
+        if cuts:  # yaklasan kesinti her 4 satirdan biri: yalniz o varsa hep o
+            items = [x for i, item in enumerate(items or [None])
+                     for x in ([cuts[i // 4 % len(cuts)]] if i % 4 == 0 else []) + ([item] if item else [])]
         if not items:
             return
         U = self.U
         bar = pygame.Rect(U(56), U(530), self.w - U(112), U(36))  # medya / ay karti 522'de, tahmin 574'te
         panel(surf, bar, alpha=150 if self.static_theme else 105, radius=bar.h // 2)
         slot, sec = divmod(int(time.time()), NEWS_SHOW)
-        when, source, title = items[slot % len(items)]
+        when, source, title, *color = items[slot % len(items)]
         alpha = (90, 170)[sec] if sec < 2 else 230
         x = bar.x + U(22)
         label = " · ".join(p for p in (when, source) if p)
         if label:
-            x = text(surf, label, font("Inter-Medium", U(18)), MUTED, (x, bar.centery), "midleft", shadow=False,
+            x = text(surf, label, font("Inter-Medium", U(18)), color[0] if color else MUTED, (x, bar.centery),
+                     "midleft", shadow=False,
                      alpha=alpha).right + U(14)
         f = font("Inter-Regular", U(21))
         text(surf, fit_text(title, f, bar.right - U(22) - x), f, SOFT, (x, bar.centery), "midleft", shadow=False,
              alpha=alpha)
+
+    def claude_usage(self):
+        """Bilgisayardan gelen Claude kullanimi; dosya degisince okunur."""
+        try:
+            mtime = CLAUDE_USAGE.stat().st_mtime
+            if mtime != getattr(self, "_claude", (None,))[0]:
+                self._claude = (mtime, json.loads(CLAUDE_USAGE.read_text(encoding="utf-8")))
+            return self._claude[1]
+        except (OSError, ValueError):
+            return None
+
+    def draw_claude(self, surf, right, cy):
+        """Ust satirda Wi-Fi adinin solunda: Claude simgesi, oturum ve hafta yuzdesi + ince cubuklar."""
+        u = self.claude_usage()
+        if not u:
+            return
+        U = self.U
+        stale = time.time() - u.get("time", 0) > 30 * 60  # bilgisayar kapali: eski bilgi soluk
+        alpha = 120 if stale else 255
+        layer = pygame.Surface((U(330), U(40)), pygame.SRCALPHA)
+        x, mid = U(2), layer.get_height() // 2
+        r = U(10)  # yildiz simgesi
+        for k in range(6):
+            a = math.pi * k / 6
+            dx, dy = math.cos(a) * r, math.sin(a) * r
+            pygame.draw.line(layer, CLAUDE_ORANGE, (x + r - dx, mid - dy), (x + r + dx, mid + dy), max(2, U(3)))
+        x += 2 * r + U(12)
+        now = dt.datetime.now(dt.timezone.utc)
+        for i, (label, key) in enumerate((("Oturum", "session"), ("Hafta", "week"))):
+            d = u.get(key) or {}
+            pct = d.get("percent")
+            try:
+                if dt.datetime.fromisoformat(d["resets_at"]) < now:
+                    pct = 0  # sifirlandi, bilgisayar henuz yeni degeri yollamadi
+            except (KeyError, TypeError, ValueError):
+                pass
+            if pct is None:
+                continue
+            if i:
+                x += U(16)
+            x = text(layer, label, font("Inter-Regular", U(17)), SOFT, (x, mid), "midleft", shadow=False).right + U(6)
+            x = text(layer, f"%{pct:.0f}", font("Inter-Medium", U(19)), WHITE, (x, mid), "midleft",
+                     shadow=False).right + U(8)
+            bar = pygame.Rect(x, mid - U(2), U(36), U(4))
+            pygame.draw.rect(layer, (255, 255, 255, 70), bar, border_radius=U(2))
+            fill = bar.copy()
+            fill.w = int(bar.w * max(0, min(1, pct / 100)))
+            if fill.w:
+                pygame.draw.rect(layer, DOWN_RED if pct >= 95 else SPECIAL_COLOR if pct >= 80 else WHITE, fill,
+                                 border_radius=U(2))
+            x = bar.right
+        img = layer.subsurface((0, 0, x + U(2), layer.get_height())).copy()
+        if stale:
+            img.fill((255, 255, 255, alpha), special_flags=pygame.BLEND_RGBA_MULT)
+        rect = img.get_rect(midright=(right, cy))
+        bg = rect.inflate(U(26), -U(4))
+        panel(surf, bg, alpha=150 if self.static_theme else 105, radius=bg.h // 2)  # parlak duvar kagidinda okunsun
+        surf.blit(img, rect)
 
     def quake_active(self):
         q = self.state.quake if self.cfg["quake"] else None
@@ -1122,6 +1228,7 @@ class Dashboard:
             left = text(surf, ssid, font("Inter-Medium", U(20)), WHITE, (x - U(12), top + size // 2), "midright",
                         shadow=False).x
         self.wifi_hit = pygame.Rect(left - U(30), 0, self.bt_hit.x - left + U(30), U(80))  # parmak icin genis alan
+        self.draw_claude(surf, left - U(34), top + size // 2)
 
         # Wi-Fi kurulum durumu (wifi_setup.py)
         ws = self.wifi_state()
